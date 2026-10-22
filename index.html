@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stoc clinică</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{--ink:#1b2a2c;--bg:#f2f6f6;--card:#fff;--teal:#0e5a5f;--mint:#d9ebe8;--red:#c0392b;--redbg:#fbe9e6;--line:#d3dedd}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 Figtree,system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+main{max-width:520px;margin:0 auto;padding:16px 16px 90px}
+h1{font-size:1.3rem;margin:8px 0 16px}
+h2{font-size:1.05rem;margin:20px 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+input,select{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:8px;margin:4px 0 10px;background:#fff}
+label{font-size:.85rem;font-weight:600}
+button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:13px 16px;background:var(--teal);color:#fff;width:100%;cursor:pointer}
+button.sec{background:var(--mint);color:var(--teal)}
+button.rosu{background:var(--red)}
+.rand{display:flex;gap:8px}.rand>*{flex:1}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#fff;border-top:1px solid var(--line)}
+nav button{background:none;color:var(--ink);border-radius:0;padding:16px 4px;font-weight:400}
+nav button.on{color:var(--teal);font-weight:700;box-shadow:inset 0 3px var(--teal)}
+.prod{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.prod:last-child{border:0}.cant{font-weight:700;font-size:1.2rem}
+.scazut .cant{color:var(--red)}.scazut{background:var(--redbg);margin:0 -14px;padding:12px 14px}
+small{color:#5c7173}
+#reader{border-radius:10px;overflow:hidden}
+#msg{position:fixed;top:12px;left:12px;right:12px;max-width:496px;margin:auto;padding:12px;border-radius:8px;background:var(--ink);color:#fff;display:none;z-index:9}
+#msg.err{background:var(--red)}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<div id="msg"></div>
+<main>
+
+<section id="login" class="hide">
+  <h1>Stoc clinică</h1>
+  <div class="card">
+    <label>Utilizator</label><input id="lu" autocomplete="username" autocapitalize="none">
+    <label>Parolă</label><input id="lp" type="password" autocomplete="current-password">
+    <button onclick="login()">Intră în cont</button>
+  </div>
+</section>
+
+<section id="app" class="hide">
+  <div id="t-scan">
+    <h1>Scanează produs</h1>
+    <div id="reader"></div>
+    <button id="bcam" onclick="camera()">Pornește camera</button>
+    <h2>Sau scrie codul de bare</h2>
+    <div class="rand"><input id="manual" inputmode="numeric" style="flex:3"><button onclick="cauta(manual.value.trim())" style="flex:1">Caută</button></div>
+    <div id="panou"></div>
+  </div>
+
+  <div id="t-stoc" class="hide">
+    <h1>Stoc curent</h1>
+    <input id="filtru" placeholder="Caută după denumire" oninput="deseneazaLista()">
+    <div class="card" id="lista"></div>
+  </div>
+
+  <div id="t-admin" class="hide">
+    <h1>Administrare</h1>
+    <div class="card">
+      <h2 style="margin-top:0">Utilizator nou sau parolă nouă</h2>
+      <label>Utilizator</label><input id="nu" autocapitalize="none">
+      <label>Parolă (minim 6 caractere)</label><input id="np" type="password" autocomplete="new-password">
+      <label>Rol</label><select id="nr"><option value="angajat">Angajat</option><option value="admin">Administrator</option></select>
+      <button onclick="adaugaUser()">Salvează utilizator</button>
+      <p><small id="lu2"></small></p>
+    </div>
+    <h2>Ultimele mișcări</h2>
+    <div class="card" id="istoric"></div>
+  </div>
+
+  <nav>
+    <button id="n-scan" onclick="tab('scan')">Scanează</button>
+    <button id="n-stoc" onclick="tab('stoc')">Stoc</button>
+    <button id="n-admin" class="hide" onclick="tab('admin')">Admin</button>
+    <button onclick="iesire()">Ieșire</button>
+  </nav>
+</section>
+</main>
+
+<script>
+const API = 'https://script.google.com/macros/s/AKfycbxQobV18EDufh1UmYwS2ADWufqQRo3NSGD3jH5e1MwuscuAv0JplCjQzq4PB1H1BjjJqQ/exec';
+let tok = '', user = '', rol = '', produse = [], qr = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function msg(t, err) {
+  const m = $('msg'); m.textContent = t; m.className = err ? 'err' : ''; m.style.display = 'block';
+  clearTimeout(msg.t); msg.t = setTimeout(() => m.style.display = 'none', 3500);
+}
+
+async function api(a, d = {}) {
+  try {
+    const r = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ a, token: tok, ...d }) });
+    const j = await r.json();
+    if (j.eroare) { if (j.eroare === 'SESIUNE') { iesire(); msg('Sesiunea a expirat. Intră din nou.', 1); } else msg(j.eroare, 1); return null; }
+    return j;
+  } catch (e) { msg('Nu m-am putut conecta. Verifică internetul.', 1); return null; }
+}
+
+function pornit() {
+  $('login').classList.toggle('hide', !!tok); $('app').classList.toggle('hide', !tok);
+  $('n-admin').classList.toggle('hide', rol !== 'admin');
+  if (tok) tab('scan');
+}
+
+async function login() {
+  const j = await api('login', { user: $('lu').value, parola: $('lp').value });
+  if (!j) return;
+  ({ token: tok, user, rol } = j); $('lp').value = '';
+  try { localStorage.setItem('sess', JSON.stringify({ tok, user, rol, t: Date.now() })); } catch (e) {}
+  pornit();
+}
+
+function iesire() {
+  opreste(); tok = ''; try { localStorage.removeItem('sess'); } catch (e) {} pornit();
+}
+
+function tab(t) {
+  ['scan', 'stoc', 'admin'].forEach(x => { $('t-' + x).classList.toggle('hide', x !== t); $('n-' + x).classList.toggle('on', x === t); });
+  if (t !== 'scan') opreste();
+  if (t === 'stoc') incarcaLista();
+  if (t === 'admin') incarcaAdmin();
+}
+
+// --- scanare ---
+async function camera() {
+  if (qr) return opreste();
+  const F = Html5QrcodeSupportedFormats;
+  qr = new Html5Qrcode('reader', { formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.QR_CODE], experimentalFeatures: { useBarCodeDetectorIfSupported: true } });
+  try {
+    await qr.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 260, height: 140 } }, txt => { opreste(); cauta(txt); });
+    $('bcam').textContent = 'Oprește camera';
+  } catch (e) { qr = null; msg('Camera nu a pornit. Permite accesul la cameră în browser.', 1); }
+}
+async function opreste() {
+  if (!qr) return; const q = qr; qr = null;
+  try { await q.stop(); q.clear(); } catch (e) {}
+  $('bcam').textContent = 'Pornește camera';
+}
+
+async function cauta(cod) {
+  if (!cod) return;
+  const j = await api('produs', { cod }); if (!j) return;
+  j.produs ? panou(j.produs) : produsNou(cod);
+}
+
+function panou(p) {
+  const jos = Number(p.cant) <= Number(p.minim);
+  $('panou').innerHTML = `<div class="card"><h2 style="margin-top:0">${esc(p.nume)}</h2>
+    <small>${esc(p.categorie)} · cod ${esc(p.cod)}</small>
+    <p class="cant" style="font-size:2rem;margin:8px 0;${jos ? 'color:var(--red)' : ''}">${esc(p.cant)} <small>în stoc (minim ${esc(p.minim)})</small></p>
+    <label>Cantitate</label><input id="qty" type="number" min="1" value="1" inputmode="numeric">
+    <div class="rand"><button onclick="miscare('${esc(p.cod)}','Intrare')">Intrare</button><button class="rosu" onclick="miscare('${esc(p.cod)}','Ieșire')">Ieșire</button></div>
+    ${rol === 'admin' ? `<button class="sec" style="margin-top:8px" onclick='formular(${JSON.stringify(p).replace(/'/g, '&#39;')})'>Modifică produsul</button>` : ''}</div>`;
+  $('panou').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function miscare(cod, tip) {
+  const j = await api('miscare', { cod, tip, cant: $('qty').value }); if (!j) return;
+  msg(tip + ' salvată. Stoc: ' + j.produs.cant); panou(j.produs);
+}
+
+function produsNou(cod) { formular({ cod, nume: '', categorie: '', minim: 0 }, true); }
+
+function formular(p, nou) {
+  $('panou').innerHTML = `<div class="card"><h2 style="margin-top:0">${nou ? 'Produs nou' : 'Modifică produsul'}</h2><small>cod ${esc(p.cod)}</small>
+    <label>Denumire</label><input id="fn" value="${esc(p.nume)}">
+    <label>Categorie</label><input id="fc" value="${esc(p.categorie)}">
+    ${nou ? '<label>Cantitate inițială</label><input id="fq" type="number" min="0" value="0" inputmode="numeric">' : ''}
+    <label>Limită minimă (primești alertă când stocul ajunge la ea)</label><input id="fm" type="number" min="0" value="${esc(p.minim)}" inputmode="numeric">
+    <button onclick="salveaza('${esc(p.cod)}')">Salvează produsul</button></div>`;
+}
+
+async function salveaza(cod) {
+  const j = await api('salveaza', { cod, nume: $('fn').value, categorie: $('fc').value, cant: $('fq') ? $('fq').value : 0, minim: $('fm').value });
+  if (!j) return; msg('Produs salvat'); cauta(cod);
+}
+
+// --- listă stoc ---
+async function incarcaLista() { const j = await api('lista'); if (j) { produse = j.produse; deseneazaLista(); } }
+function deseneazaLista() {
+  const f = $('filtru').value.toLowerCase();
+  const l = produse.filter(p => String(p.nume).toLowerCase().includes(f))
+    .sort((a, b) => ((a.cant <= a.minim) ? 0 : 1) - ((b.cant <= b.minim) ? 0 : 1) || String(a.nume).localeCompare(b.nume));
+  $('lista').innerHTML = l.length ? l.map(p => `<div class="prod ${p.cant <= p.minim ? 'scazut' : ''}" onclick="tab('scan');cauta('${esc(p.cod)}')">
+    <div>${esc(p.nume)}<br><small>${esc(p.categorie)} · minim ${esc(p.minim)}</small></div><div class="cant">${esc(p.cant)}</div></div>`).join('')
+    : '<small>Niciun produs. Scanează primul produs din secțiunea Scanează.</small>';
+}
+
+// --- admin ---
+async function incarcaAdmin() {
+  const [u, h] = await Promise.all([api('utilizatori'), api('istoric')]);
+  if (u) $('lu2').textContent = 'Conturi existente: ' + u.utilizatori.map(x => x.user + ' (' + x.rol + ')').join(', ');
+  if (h) $('istoric').innerHTML = h.istoric.map(x => `<div class="prod" style="cursor:default"><div>${esc(x.produs)}<br><small>${esc(x.user)} · ${esc(x.data)}</small></div><div class="cant">${x.tip === 'Ieșire' ? '−' : '+'}${esc(x.cant)}</div></div>`).join('') || '<small>Nicio mișcare încă.</small>';
+}
+async function adaugaUser() {
+  const j = await api('adaugaUtilizator', { user: $('nu').value, parola: $('np').value, rol: $('nr').value });
+  if (j) { msg('Utilizator salvat'); $('nu').value = $('np').value = ''; incarcaAdmin(); }
+}
+
+// --- pornire ---
+try { const s = JSON.parse(localStorage.getItem('sess') || 'null'); if (s && Date.now() - s.t < 6 * 3600e3) ({ tok, user, rol } = s); } catch (e) {}
+pornit();
+</script>
+</body>
+</html>
